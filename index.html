@@ -45,8 +45,15 @@
   
   .btn { padding: 6px 12px; border-radius:4px; border:none; cursor:pointer; font-size:11px; font-weight:600; display:inline-flex; align-items:center; gap:4px; }
   .btn-primary { background:var(--accent); color:#000; }
+  .btn-danger { background:var(--danger); color:#fff; }
   .btn-ghost { background:transparent; color:var(--text); border:1px solid var(--border); }
   
+  /* 弹窗样式 */
+  .modal { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.85); z-index:1000; align-items:center; justify-content:center; }
+  .modal-content { background:var(--surface); border:1px solid var(--border); width:90%; max-width:1000px; max-height:80vh; border-radius:12px; display:flex; flex-direction:column; }
+  .modal-header { padding:15px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; }
+  .modal-body { padding:20px; overflow-y:auto; }
+
   .loading-mask { position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 9999; display: none; align-items: center; justify-content: center; color: var(--accent); }
 </style>
 </head>
@@ -55,6 +62,31 @@
 <div class="toast" id="toastMsg"></div>
 <div class="loading-mask" id="loadingMask">☁️ 数据同步中...</div>
 
+<div id="trashModal" class="modal">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h3 style="font-family:'Syne'">🗑️ 回收站 (只读)</h3>
+      <button class="btn btn-ghost" onclick="closeTrash()">关闭</button>
+    </div>
+    <div class="modal-body">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th width="100">用户</th>
+              <th width="100">归属</th>
+              <th width="120">过期时间</th>
+              <th width="100">金额</th>
+              <th style="color:var(--text3)">状态：仅供查看，无法操作</th>
+            </tr>
+          </thead>
+          <tbody id="trashTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
 <header class="header">
   <div style="display:flex; align-items:center">
     <div class="logo">ZY FLOW <small style="font-size: 10px; color: var(--text3)">知音科技版</small></div>
@@ -62,6 +94,7 @@
   </div>
   <div style="display:flex; gap:8px;">
     <button class="btn btn-ghost" onclick="syncFromCloud()">🔄 刷新数据</button>
+    <button class="btn btn-ghost" style="color:var(--unused)" onclick="openTrash()">🗑️ 查看回收站</button>
     <button class="btn btn-primary" onclick="addUser()">＋ 新增用户</button>
   </div>
 </header>
@@ -89,7 +122,7 @@
           <th width="115">到期日期</th>
           <th width="70">金额</th>
           <th width="80">状态</th>
-          <th width="80">操作</th>
+          <th width="120">操作</th>
         </tr>
       </thead>
       <tbody id="userTableBody"></tbody>
@@ -103,7 +136,7 @@ const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
 const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const STORAGE_KEY = 'uf_v45_db';
 const ROW_ID = 1;
-const MY_OWNER = "知音科技"; // 强制归属标识
+const MY_OWNER = "知音科技"; 
 
 let db = { users: [], unused: [], trash: [] };
 let currentFilter = 'all';
@@ -114,6 +147,7 @@ async function syncFromCloud() {
         const { data, error } = await supabaseClient.from('MainData').select('content').eq('id', ROW_ID).single();
         if (data && data.content) {
             db = typeof data.content === 'string' ? JSON.parse(data.content) : data.content;
+            if(!db.trash) db.trash = [];
             localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
             document.getElementById('syncStatus').innerText = "✅ 已同步";
         }
@@ -134,13 +168,11 @@ async function saveToCloud() {
 
 function render() {
     const container = document.getElementById('userTableBody');
-    // 【核心逻辑】只显示知音科技的数据
     let displayData = db.users.filter(u => u.owner === MY_OWNER);
     
     if (currentFilter !== 'all') {
         displayData = displayData.filter(u => getStatus(u.expiry) === currentFilter);
     }
-
     displayData.sort((a,b) => new Date(a.expiry) - new Date(b.expiry));
 
     renderStats(displayData);
@@ -162,10 +194,41 @@ function render() {
             <td><span style="color:var(--${st}); font-size:10px; font-weight:bold">${st==='expiring'?'⚠️到期':st==='active'?'✅有效':'❌过期'}</span></td>
             <td>
                 <button class="btn btn-primary" style="padding:2px 8px" onclick="quickRenew('${u.id}')">续费</button>
+                <button class="btn btn-danger" style="padding:2px 8px" onclick="deleteUser('${u.id}')">删除</button>
             </td>
         `;
         container.appendChild(tr);
     });
+}
+
+// 渲染回收站内容 (只读)
+function openTrash() {
+    const body = document.getElementById('trashTableBody');
+    // 只显示原本归属知音科技的数据
+    const trashData = db.trash.filter(u => u.owner === MY_OWNER);
+    body.innerHTML = trashData.map(u => `
+        <tr>
+            <td>${u.username}</td>
+            <td>${u.owner}</td>
+            <td>${u.expiry}</td>
+            <td>${u.amount}</td>
+            <td style="color:var(--text3); font-style:italic">不可操作</td>
+        </tr>
+    `).join('') || '<tr><td colspan="5" style="text-align:center; padding:20px; color:var(--text3)">回收站内无相关记录</td></tr>';
+    document.getElementById('trashModal').style.display = 'flex';
+}
+
+function closeTrash() { document.getElementById('trashModal').style.display = 'none'; }
+
+function deleteUser(id) {
+    if(!confirm("确定要将此用户移至回收站吗？")) return;
+    const idx = db.users.findIndex(u => u.id === id);
+    if(idx !== -1) {
+        const user = db.users.splice(idx, 1)[0];
+        db.trash.push(user);
+        saveToCloud().then(render);
+        showToast("已移至回收站");
+    }
 }
 
 function renderStats(data) {
@@ -203,7 +266,7 @@ function activate(id) {
         id: 'u_' + Date.now(), 
         username: u.username, 
         password: u.password, 
-        owner: MY_OWNER, // 激活时强制设置为知音科技
+        owner: MY_OWNER, 
         wechat: '-', 
         amount: '32', 
         windows: '100', 
@@ -250,7 +313,7 @@ function addUser() {
             id: 'u_'+Date.now(), 
             username:parts[0], 
             password:parts[1]||'123456', 
-            owner: MY_OWNER, // 新增时强制设置为知音科技
+            owner: MY_OWNER, 
             wechat:'-', 
             amount: '32', 
             activeTime: new Date().toISOString().slice(0,10),
@@ -266,12 +329,16 @@ function getStatus(date) {
     return d < 0 ? 'expired' : (d <= 3 ? 'expiring' : 'active');
 }
 
-function copyText(text) {
-    navigator.clipboard.writeText(text);
+function showToast(msg) {
     const toast = document.getElementById('toastMsg');
-    toast.innerText = "复制成功: " + text;
+    toast.innerText = msg;
     toast.classList.add('show');
     setTimeout(() => toast.classList.remove('show'), 1500);
+}
+
+function copyText(text) {
+    navigator.clipboard.writeText(text);
+    showToast("复制成功: " + text);
 }
 
 syncFromCloud();
