@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>知音科技 - 资产管理系统</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0b0d; --surface: #111318; --surface2: #181c24; --border: #252c3a; 
+    --accent: #f0a500; --text: #e8ecf4; --text3: #4a5568; --danger: #ff4757; 
+    --success: #2ed573; --warning: #ffa502; --unused: #a78bfa;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: 'JetBrains Mono', 'Microsoft YaHei', sans-serif; background: var(--bg); color: var(--text); padding-bottom: 20px; overflow-y: scroll; }
+  
+  .header { position:sticky; top:0; z-index:100; background: rgba(10,11,13,0.9); backdrop-filter: blur(10px); border-bottom: 1px solid var(--border); padding: 12px 20px; display:flex; align-items:center; justify-content:space-between; }
+  .logo-area { display: flex; align-items: center; gap: 15px; }
+  .logo { font-family:'Syne',sans-serif; font-weight:800; color: var(--accent); font-size: 1.2rem; }
+  .sync-status { font-size: 11px; color: var(--text3); background: var(--surface2); padding: 2px 8px; border-radius: 4px; border: 1px solid var(--border); }
+
+  .stats-bar { display:grid; grid-template-columns:repeat(4, 1fr); gap:10px; padding: 20px; width: 98%; max-width: 1400px; margin:0 auto; }
+  .stat-card { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:12px; cursor:pointer; }
+  .stat-card.active { border: 1px solid var(--accent); }
+  .stat-label { font-size:10px; color:var(--text3); margin-bottom:4px; }
+  .stat-value { font-family:'Syne',sans-serif; font-size:20px; font-weight: 800; }
+
+  .unused-container { width: 98%; max-width: 1400px; margin: 0 auto 20px auto; padding: 0 20px; }
+  .unused-box { background: rgba(167, 139, 250, 0.05); border: 1px dashed var(--unused); border-radius: 8px; padding: 12px; }
+  .unused-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  .unused-item { background: var(--surface2); border: 1px solid var(--border); padding: 4px 10px; border-radius: 4px; font-size: 12px; display: flex; align-items: center; gap: 8px; }
+
+  .main-content { width: 98%; max-width: 1400px; margin:0 auto; padding:0 20px; }
+  .table-wrap { background:var(--surface); border:1px solid var(--border); border-radius:8px; overflow: hidden; }
+  table { width:100%; border-collapse:collapse; table-layout: fixed; }
+  th { background:var(--surface2); color:var(--text3); font-size:11px; padding:12px 10px; text-align:left; border-bottom:1px solid var(--border); }
+  td { padding:12px 10px; font-size:13px; border-bottom:1px solid var(--border); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
+
+  .star-icon { color: var(--accent); margin-right: 4px; font-weight: bold; }
+
+  .editable { cursor: cell; border-bottom: 1px dashed #444; }
+  .editable:hover { color: var(--accent); background: rgba(240,165,0,0.05); }
+  .edit-input { background: #000; border: 1px solid var(--accent); color: #fff; width: 100%; padding: 4px; font-family: inherit; outline: none; }
+  
+  .btn { padding: 5px 10px; border-radius:4px; border:none; cursor:pointer; font-size:11px; font-weight:600; transition: 0.2s; }
+  .btn-success { background:var(--success); color:#000; }
+  .btn-ghost { background:transparent; color:var(--text); border:1px solid var(--border); }
+  
+  .trash-drawer { position: fixed; right: -400px; top: 0; width: 400px; height: 100%; background: var(--surface); border-left: 1px solid var(--border); transition: 0.3s; z-index: 101; padding: 20px; display: flex; flex-direction: column; box-shadow: -10px 0 30px rgba(0,0,0,0.5); }
+  .trash-drawer.open { right: 0; }
+  .trash-list { flex: 1; overflow-y: auto; margin-top: 15px; }
+  .trash-item { background: var(--surface2); border: 1px solid var(--border); padding: 12px; border-radius: 6px; margin-bottom: 10px; border-left: 3px solid var(--text3); }
+
+  .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: none; z-index: 100; backdrop-filter: blur(2px); }
+  .overlay.open { display: block; }
+  .loading-mask { position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 9999; display: none; align-items: center; justify-content: center; color: var(--accent); font-weight: bold; }
+</style>
+</head>
+<body>
+
+<div class="loading-mask" id="loadingMask">正在请求云端数据...</div>
+
+<header class="header">
+  <div class="logo-area">
+    <div class="logo">⚡ 知音科技</div>
+    <div class="sync-status" id="syncLabel">初始化...</div>
+  </div>
+  <button class="btn btn-ghost" onclick="toggleTrash(true)">📜 查看回收站</button>
+</header>
+
+<div class="stats-bar" id="statsBar"></div>
+
+<div class="unused-container">
+  <div class="unused-box">
+    <div style="font-size: 11px; color: var(--unused); font-weight: bold;">🔑 待激活名额</div>
+    <div class="unused-list" id="unusedGrid"></div>
+  </div>
+</div>
+
+<main class="main-content">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th width="100">归属</th>
+          <th width="80">窗口</th>
+          <th width="120">用户</th>
+          <th width="120">密码</th>
+          <th width="120">微信</th>
+          <th width="110">激活日期</th>
+          <th width="110">到期日期</th>
+          <th width="70">状态</th>
+          <th width="90">操作</th>
+        </tr>
+      </thead>
+      <tbody id="userTableBody"></tbody>
+    </table>
+  </div>
+</main>
+
+<div class="overlay" id="overlay" onclick="toggleTrash(false)"></div>
+<div class="trash-drawer" id="trashDrawer">
+  <div style="display:flex; justify-content:space-between; align-items:center; border-bottom: 1px solid var(--border); padding-bottom: 15px;">
+    <h3>📜 回收站 (只读)</h3>
+    <button class="btn btn-ghost" onclick="toggleTrash(false)">关闭</button>
+  </div>
+  <div class="trash-list" id="trashList"></div>
+</div>
+
+<script>
+const SUPABASE_URL = 'https://xlmnfzocrlqvbzzrdshr.supabase.co'; 
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhsbW5mem9jcmxxdmJ6enJkc2hyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5ODMyMjAsImV4cCI6MjA5MDU1OTIyMH0.Pvhl7JTz-FmOZ6J_aT8kBRve3ZrjOIIVVekr4jTZXUM'; 
+const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const ROW_ID = 1; 
+
+let db = { users: [], unused: [], trash: [] };
+let lastId = null;
+
+async function sync() {
+    updateSyncLabel("🔄 同步中...");
+    const { data, error } = await supabaseClient.from('MainData').select('content').eq('id', ROW_ID).single();
+    if (error) {
+        updateSyncLabel("❌ 同步失败");
+    } else if (data?.content) {
+        db = typeof data.content === 'string' ? JSON.parse(data.content) : data.content;
+        updateSyncLabel("✅ 云端已同步");
+        render();
+    }
+}
+
+async function save() {
+    updateSyncLabel("☁️ 正在保存...");
+    const { error } = await supabaseClient.from('MainData').upsert({ 
+        id: ROW_ID, 
+        content: JSON.stringify(db), 
+        updated_at: new Date() 
+    });
+    if(!error) {
+        updateSyncLabel("✅ 已保存");
+        render();
+    } else {
+        updateSyncLabel("⚠️ 保存失败");
+    }
+}
+
+function updateSyncLabel(text) {
+    document.getElementById('syncLabel').innerText = text;
+}
+
+function getStatus(expiry) {
+    const days = Math.ceil((new Date(expiry) - new Date()) / 86400000);
+    if (days < 0) return { label: '已过期', color: 'var(--danger)' };
+    if (days <= 3) return { label: '待续费', color: 'var(--warning)' };
+    return { label: '正常', color: 'var(--success)' };
+}
+
+function render() {
+    const current = db.users.filter(u => u.owner === '知音科技');
+    
+    // 统计栏
+    document.getElementById('statsBar').innerHTML = `
+        <div class="stat-card active"><div class="stat-label">归属：知音科技</div><div class="stat-value">${current.length}</div></div>
+        <div class="stat-card"><div class="stat-label">正常使用</div><div class="stat-value" style="color:var(--success)">${current.filter(u=>getStatus(u.expiry).label==='正常').length}</div></div>
+        <div class="stat-card"><div class="stat-label">到期/过期</div><div class="stat-value" style="color:var(--danger)">${current.filter(u=>getStatus(u.expiry).label!=='正常').length}</div></div>
+        <div class="stat-card" style="border-color:var(--unused)"><div class="stat-label">待激活名额</div><div class="stat-value" style="color:var(--unused)">${db.unused.length}</div></div>
+    `;
+
+    // 待激活
+    document.getElementById('unusedGrid').innerHTML = db.unused.map(u => `
+        <div class="unused-item">
+            <span>${u.username}</span>
+            <button class="btn btn-success" style="padding:2px 6px; font-size:10px;" onclick="activate('${u.id}')">激活</button>
+        </div>
+    `).join('');
+
+    // 主表渲染
+    const tbody = document.getElementById('userTableBody');
+    tbody.innerHTML = '';
+    
+    const sorted = [...current].sort((a,b) => {
+        if(a.id === lastId) return -1;
+        if(b.id === lastId) return 1;
+        return new Date(a.expiry) - new Date(b.expiry);
+    });
+
+    sorted.forEach(u => {
+        const st = getStatus(u.expiry);
+        const tr = document.createElement('tr');
+        if(u.id === lastId) tr.style.background = "rgba(240,165,0,0.08)";
+        
+        tr.innerHTML = `
+            <td>${u.id === lastId ? '<span class="star-icon">★</span>' : ''}${u.owner}</td>
+            <td class="editable" data-f="windows">${u.windows || '100'}</td>
+            <td><b>${u.username}</b></td>
+            <td class="editable" data-f="password">${u.password}</td>
+            <td class="editable" data-f="wechat">${u.wechat || '-'}</td>
+            <td>${u.activeTime || '-'}</td>
+            <td>${u.expiry}</td>
+            <td style="color:${st.color}; font-weight:bold; font-size:11px">${st.label}</td>
+            <td>
+                <button class="btn btn-success" onclick="renew('${u.id}')">续费</button>
+                <button class="btn btn-ghost" onclick="del('${u.id}')" style="color:var(--danger); border-color:transparent">删除</button>
+            </td>
+        `;
+        
+        // 双击编辑限制
+        tr.querySelectorAll('.editable').forEach(td => {
+            td.ondblclick = () => {
+                const field = td.dataset.f;
+                const input = document.createElement('input');
+                input.className = 'edit-input';
+                input.value = td.innerText === '-' ? '' : td.innerText;
+                td.innerHTML = ''; td.appendChild(input); input.focus();
+                input.onblur = () => {
+                    u[field] = input.value.trim() || '-';
+                    save();
+                };
+                input.onkeydown = (e) => { if(e.key === 'Enter') input.blur(); };
+            };
+        });
+        tbody.appendChild(tr);
+    });
+}
+
+function activate(id) {
+    const idx = db.unused.findIndex(x => x.id === id);
+    if(idx === -1) return;
+    const item = db.unused.splice(idx, 1)[0];
+    const d = new Date();
+    const activeTime = d.toISOString().slice(0, 10);
+    d.setMonth(d.getMonth() + 1);
+    
+    const newId = 'u_' + Date.now();
+    lastId = newId; 
+    
+    db.users.push({
+        id: newId,
+        username: item.username,
+        password: item.password,
+        owner: '知音科技',
+        windows: '100',
+        wechat: '-',
+        activeTime: activeTime,
+        expiry: d.toISOString().slice(0, 10)
+    });
+    save();
+}
+
+function renew(id) {
+    const u = db.users.find(x => x.id === id);
+    if(!u) return;
+    let base = new Date();
+    const currentExp = new Date(u.expiry);
+    if(currentExp > base) base = currentExp;
+    base.setDate(base.getDate() + 30);
+    u.expiry = base.toISOString().slice(0,10);
+    save();
+}
+
+function del(id) {
+    if(!confirm("确定移至回收站吗？")) return;
+    const idx = db.users.findIndex(x => x.id === id);
+    if(idx > -1) {
+        const item = db.users.splice(idx, 1)[0];
+        item.delTime = new Date().toLocaleString();
+        db.trash.unshift(item);
+        save();
+    }
+}
+
+function toggleTrash(s) {
+    document.getElementById('trashDrawer').classList.toggle('open', s);
+    document.getElementById('overlay').classList.toggle('open', s);
+    if(s) {
+        document.getElementById('trashList').innerHTML = db.trash
+            .filter(u => u.owner === '知音科技')
+            .map(u => `
+                <div class="trash-item">
+                    <div style="font-weight:bold; margin-bottom:5px; display:flex; justify-content:space-between">
+                        <span>${u.username}</span>
+                        <span style="font-size:9px; color:var(--text3)">${u.delTime}</span>
+                    </div>
+                    <div style="font-size:11px; color:var(--text3)">
+                        窗口: ${u.windows} | 密码: ${u.password}<br>
+                        到期: ${u.expiry}
+                    </div>
+                </div>
+            `).join('') || '<div style="text-align:center;color:var(--text3);margin-top:20px">回收站无记录</div>';
+    }
+}
+
+sync();
+</script>
+</body>
+</html>
